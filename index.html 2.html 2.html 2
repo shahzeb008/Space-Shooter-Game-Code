@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Space Shooter</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.js"></script>
+  <style>
+    body { margin: 0; background: black; font-family: Arial; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+    canvas { display: block; margin: 20px auto; border: 2px solid #0af; box-shadow: 0 0 20px #0af; }
+    #gameInfo { color: white; text-align: center; padding: 10px; width: 800px; }
+    #score { font-size: 24px; color: #0ff; text-shadow: 0 0 10px #0ff; }
+    #instructions { margin-top: 10px; font-size: 16px; color: #aaa; }
+    .game-title { color: #0ff; font-size: 36px; margin-bottom: 10px; text-shadow: 0 0 10px #0ff; }
+    #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 420px; padding: 20px; background: rgba(0,0,0,0.85); border: 2px solid #0af; box-shadow: 0 0 30px #0af; z-index: 9999; text-align: center; border-radius: 8px; }
+    #menu h2 { color: #0ff; margin: 0 0 16px; text-shadow: 0 0 10px #0ff; }
+    .btn-level { margin: 8px; padding: 10px 22px; font-size: 18px; background: #111; color: #0ff; border: 2px solid #0af; cursor: pointer; border-radius: 6px; }
+    .btn-level:hover { background: #002233; }
+    #difficultyLabel { position: absolute; top: 18px; right: 18px; color: #0ff; font-size: 18px; text-shadow: 0 0 8px #0ff; }
+    .hint { margin-top: 10px; color: #99d; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="game-title">SPACE SHOOTER</div>
+  <div id="gameInfo">
+    <div id="score">SCORE: 0</div>
+    <div id="instructions">LEFT/RIGHT arrows to move | SPACEBAR to shoot | R to open menu after GAME OVER</div>
+  </div>
+  <div id="menu">
+    <h2 id="menuTitle">Choose Difficulty</h2>
+    <button class="btn-level" id="btn-easy">Easy</button>
+    <button class="btn-level" id="btn-medium">Medium</button>
+    <button class="btn-level" id="btn-hard">Hard</button>
+    <div class="hint">Or press 1/2/3</div>
+  </div>
+  <div id="difficultyLabel" style="display:none;">Difficulty: <span id="diffText">Medium</span></div>
+
+<script>
+const LEVEL_CONFIGS = {
+  easy:   { spawnDelay: 1400, minSpeed: 30, maxSpeed: 80, lives: 5, shootCooldown: 250 },
+  medium: { spawnDelay: 1000, minSpeed: 40, maxSpeed: 100, lives: 3, shootCooldown: 300 },
+  hard:   { spawnDelay: 700, minSpeed: 80, maxSpeed: 160, lives: 1, shootCooldown: 200 }
+};
+
+window.selectedLevelKey = 'medium';
+window.selectedLevelConfig = LEVEL_CONFIGS.medium;
+
+document.getElementById('btn-easy').onclick = () => startGame('easy');
+document.getElementById('btn-medium').onclick = () => startGame('medium');
+document.getElementById('btn-hard').onclick = () => startGame('hard');
+document.addEventListener('keydown', e => { if (e.key === '1') startGame('easy'); if (e.key === '2') startGame('medium'); if (e.key === '3') startGame('hard'); });
+
+function startGame(levelKey) {
+  window.selectedLevelKey = levelKey;
+  window.selectedLevelConfig = LEVEL_CONFIGS[levelKey];
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('difficultyLabel').style.display = 'block';
+  document.getElementById('diffText').textContent = levelKey.toUpperCase();
+  if (window.gameInstance) { window.gameInstance.scene.getScene('GameScene').scene.restart(); }
+  else { createPhaserGame(); }
+}
+
+class SpaceShooter extends Phaser.Scene {
+    constructor() {
+        super("GameScene");
+        this.score = 0;
+        this.gameOver = false;
+        this.lives = 3;
+        this.levelSettings = { spawnDelay: 1000, minSpeed: 40, maxSpeed: 100, lives: 3, shootCooldown: 300 };
+    }
+
+    preload() {
+        this.load.image("background", "https://labs.phaser.io/assets/skies/deep-space.jpg");
+        this.load.image("ship", "https://labs.phaser.io/assets/sprites/player.png");
+        this.load.image("bullet", "https://labs.phaser.io/assets/sprites/bullets/bullet11.png");
+        this.load.image("enemy_local", "assets/dragon.png");
+        this.load.image("enemy_remote", "https://labs.phaser.io/assets/sprites/dragon.png");
+        this.load.spritesheet('explosion', 'https://labs.phaser.io/assets/sprites/explosion.png', { frameWidth: 64, frameHeight: 64, endFrame: 23 });
+    }
+
+    init() {
+        if (window.selectedLevelConfig) this.levelSettings = Object.assign({}, window.selectedLevelConfig);
+    }
+
+    create() {
+        this.enemyKey = this.textures.exists('enemy_local') ? 'enemy_local' : 'enemy_remote';
+        this.score = 0;
+        this.gameOver = false;
+        this.lives = this.levelSettings.lives;
+        document.getElementById('menu').style.display = 'none';
+        document.getElementById('difficultyLabel').style.display = 'block';
+        document.getElementById('menuTitle').textContent = 'Choose Difficulty';
+
+        this.background = this.add.tileSprite(400, 300, 800, 600, "background");
+        this.player = this.physics.add.sprite(400, 500, "ship").setCollideWorldBounds(true);
+        this.player.setScale(1.8).setTint(0x00aaff);
+
+        this.bullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 10 });
+        this.enemies = this.physics.add.group({ maxSize: 40 });
+
+        this.anims.create({ key: 'explode', frames: this.anims.generateFrameNumbers('explosion', { start: 0, end: 23 }), frameRate: 20, repeat: 0, hideOnComplete: true });
+
+        this.time.addEvent({
+            delay: this.levelSettings.spawnDelay,
+            callback: () => {
+                if (this.gameOver) return;
+                let enemy = this.enemies.create(Phaser.Math.Between(50, 750), -50, this.enemyKey);
+                if (enemy) {
+                    enemy.setScale(0.6);
+                    enemy.setData('speed', Phaser.Math.Between(this.levelSettings.minSpeed, this.levelSettings.maxSpeed));
+                    if (enemy.body) enemy.body.setSize(enemy.width * enemy.scaleX, enemy.height * enemy.scaleY, true);
+                }
+            },
+            loop: true
+        });
+
+        this.scoreText = this.add.text(16, 16, 'SCORE: 0', { fontSize: '32px', fill: '#0ff', stroke: '#000', strokeThickness: 4 });
+        this.livesText = this.add.text(600, 16, 'LIVES: ' + this.lives, { fontSize: '32px', fill: '#ff0', stroke: '#000', strokeThickness: 4 });
+        this.add.text(400, 16, 'Difficulty: ' + window.selectedLevelKey.toUpperCase(), { fontSize: '24px', fill: '#0ff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 0);
+
+        this.physics.add.overlap(this.bullets, this.enemies, this.hitEnemy, null, this);
+        this.physics.add.overlap(this.player, this.enemies, this.hitPlayer, null, this);
+
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.spacebar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+        this.canShoot = true;
+    }
+
+    shootBullet() {
+        if (!this.canShoot || this.gameOver) return;
+        let bullet = this.bullets.create(this.player.x, this.player.y - 30, "bullet");
+        if (bullet) { bullet.setScale(0.6).setTint(0xffff00).setData('speed', 400); }
+        let emitter = this.add.particles(0, 0, 'bullet', { speed: 100, scale: { start: 0.3, end: 0 }, blendMode: 'ADD', lifespan: 200, quantity: 3 });
+        emitter.setPosition(this.player.x, this.player.y - 10).explode();
+        this.canShoot = false;
+        this.time.delayedCall(this.levelSettings.shootCooldown, () => { this.canShoot = true; });
+    }
+
+    hitEnemy(bullet, enemy) {
+        this.add.sprite(enemy.x, enemy.y, 'explosion').play('explode');
+        bullet.destroy();
+        enemy.destroy();
+        this.score += 10;
+        this.scoreText.setText('SCORE: ' + this.score);
+        let popup = this.add.text(enemy.x, enemy.y, '+10', { fontSize: '20px', fill: '#0ff' });
+        this.tweens.add({ targets: popup, y: enemy.y - 50, alpha: 0, duration: 1000, ease: 'Power2', onComplete: () => popup.destroy() });
+    }
+
+    hitPlayer(player, enemy) {
+        this.add.sprite(player.x, player.y, 'explosion').play('explode');
+        enemy.destroy();
+        this.lives--;
+        this.livesText.setText('LIVES: ' + this.lives);
+        player.setTint(0xff0000);
+        this.time.delayedCall(200, () => { player.clearTint(); });
+        
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.add.text(400, 300, 'GAME OVER', { fontSize: '64px', fill: '#f00', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5);
+            document.getElementById('difficultyLabel').style.display = 'none';
+            document.getElementById('menuTitle').textContent = 'GAME OVER - Choose Difficulty';
+            document.getElementById('menu').style.display = 'block';
+            this.add.text(400, 380, 'Choose a difficulty from the menu', { fontSize: '20px', fill: '#fff' }).setOrigin(0.5);
+        }
+    }
+
+    update() {
+        if (this.gameOver) {
+            if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
+                document.getElementById('menu').style.display = 'block';
+                document.getElementById('difficultyLabel').style.display = 'none';
+            }
+            return;
+        }
+
+        this.background.tilePositionY -= 1.5;
+        this.player.setVelocityX(this.cursors.left.isDown ? -300 : this.cursors.right.isDown ? 300 : 0);
+        if (Phaser.Input.Keyboard.JustDown(this.spacebar)) this.shootBullet();
+
+        this.bullets.getChildren().forEach(bullet => {
+            bullet.y -= bullet.getData('speed') * (this.game.loop.delta / 1000);
+            if (bullet.y < -50) bullet.destroy();
+        });
+
+        this.enemies.getChildren().forEach(enemy => {
+            enemy.y += enemy.getData('speed') * (this.game.loop.delta / 1000);
+            if (enemy.y > 650) enemy.destroy();
+        });
+    }
+}
+
+function createPhaserGame() {
+  window.gameInstance = new Phaser.Game({
+      type: Phaser.AUTO, width: 800, height: 600,
+      physics: { default: "arcade", arcade: { gravity: { y: 0 }, debug: false } },
+      scene: SpaceShooter
+  });
+}
+</script>
+</body>
+</html>
